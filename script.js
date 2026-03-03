@@ -1,44 +1,108 @@
-function encryptToPayload(plainText) {
-    const encoder = new TextEncoder();
-    const bytes = encoder.encode(plainText);
-    const n = bytes.length;
+(function(){
 
-    // 1. Tạo mảng chỉ mục I (đã bị xáo trộn ngẫu nhiên)
-    let I = Array.from({length: n}, (_, i) => i);
-    for (let i = n - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [I[i], I[j]] = [I[j], I[i]];
-    }
+"use strict";
 
-    // 2. Tạo mảng P và mã hóa theo đúng logic của file gốc
-    let P = new Uint8Array(n);
-    let seed = 0xdeadbeef;
-    const nextK = () => {
+/* ============================
+   PAYLOAD (được build offline)
+============================ */
+
+const P = new Uint8Array([
+__ENCODED__
+]);
+
+const I = new Uint32Array([
+__INDEX__
+]);
+
+/* ============================
+   CUSTOM PRNG
+============================ */
+
+function R(seed){
+    return function(){
         seed ^= seed << 13;
         seed ^= seed >>> 17;
         seed ^= seed << 5;
-        return (seed >>> 0) & 0xFF;
-    };
-
-    for (let i = 0; i < n; i++) {
-        let k = nextK();
-        let originalPos = I[i];
-        let originalByte = bytes[originalPos];
-        
-        // Đảo ngược logic giải mã để thành mã hóa:
-        // P[i] = (Byte ^ k) + offset
-        let encryptedByte = (originalByte ^ k) + (i % 251);
-        P[i] = encryptedByte & 0xFF;
+        return seed >>> 0;
     }
-
-    return { P: Array.from(P), I: I };
 }
 
-// Chạy thử với nội dung CSV của bạn
-const myCSV = `user,pass\nadmin,123456\nstaff,password`;
-const result = encryptToPayload(myCSV);
+/* ============================
+   BYTE RESOLVER (không dựng full)
+============================ */
 
-console.log("Mảng P của bạn (Dán vào __ENCODED__):");
-console.log(result.P.join(', '));
-console.log("\nMảng I của bạn (Dán vào __INDEX__):");
-console.log(result.I.join(', '));
+function byteAt(pos){
+
+    let kgen = R(0xdeadbeef);
+
+    for(let i=0;i<P.length;i++){
+
+        let k = kgen() & 0xFF;
+        let v = (P[i] - (i % 251)) & 0xFF;
+        let originalIndex = I[i];
+
+        if(originalIndex === pos){
+            return v ^ k;
+        }
+    }
+
+    return 0;
+}
+
+/* ============================
+   LAZY LINE READER
+============================ */
+
+function search(query){
+
+    let decoder = new TextDecoder();
+    let buffer = [];
+    let results = [];
+    let temp = [];
+
+    for(let pos=0; pos<P.length; pos++){
+
+        let b = byteAt(pos);
+
+        if(b === 10){ // newline
+
+            let line = decoder.decode(new Uint8Array(temp));
+            if(line.includes(query)){
+                results.push(line);
+            }
+
+            temp.length = 0;
+
+        }else{
+            temp.push(b);
+        }
+    }
+
+    return results;
+}
+
+/* ============================
+   UI BIND
+============================ */
+
+window.secureSearch = function(){
+
+    const q = document.getElementById("q").value;
+    const res = search(q);
+
+    document.getElementById("out").textContent =
+        res.join("\n");
+
+}
+
+/* ============================
+   OPTIONAL MEMORY SCRUB
+============================ */
+
+function wipe(){
+    for(let i=0;i<P.length;i++){
+        P[i] = 0;
+    }
+}
+
+})();
